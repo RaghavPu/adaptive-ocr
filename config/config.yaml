@@ -1,0 +1,35 @@
+# Configuration file for DeepSeek-OCR evaluation pipeline
+
+model:
+  name: "deepseek-ai/DeepSeek-OCR"
+  device: "cuda"  # or "cpu"
+  use_flash_attention: true
+
+inference:
+  prompt: "<image>\nFree OCR."
+  base_size: 1024
+  image_size: 640
+  crop_mode: true
+
+evaluation:
+  output_dir: "results"
+  save_individual_results: true
+  metrics:
+    - edit_distance
+    - normalized_edit_distance
+    - character_accuracy
+    - word_accuracy
+    - sentence_accuracy
+
+dataset:
+  # OmniDocBench dataset paths
+  images_dir: "images"  # or "documents", "data"
+  annotations_dir: "annotations"  # or "ground_truth", "labels"
+  supported_formats:
+    - ".png"
+    - ".jpg"
+    - ".jpeg"
+    - ".pdf"
+    - ".tiff"
+    - ".tif"
+
