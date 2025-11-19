@@ -143,11 +143,15 @@ def format_table(summary: Dict[str, Dict[str, List[float]]]) -> str:
         {source for level_data in summary.values() for source in level_data}
     )
 
+    custom_order = {"tiny": 0, "small": 1, "base": 2, "large": 3}
+
     def sort_key(level: str):
+        if level in custom_order:
+            return (0, custom_order[level])
         try:
-            return (0, float(level))
+            return (1, float(level))
         except ValueError:
-            return (1, level)
+            return (2, level)
 
     levels = sorted(summary.keys(), key=sort_key)
 
@@ -190,4 +194,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
