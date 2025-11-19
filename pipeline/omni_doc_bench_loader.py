@@ -38,6 +38,33 @@ class OmniDocBenchLoader:
             with open(gt_path, 'r', encoding='utf-8') as f:
                 return f.read()
     
+    def _extract_text_from_layout_dets(self, layout_dets: List[Dict]) -> str:
+        """Extract all text from layout_dets annotations.
+        
+        Args:
+            layout_dets: List of layout detection dictionaries
+            
+        Returns:
+            Combined text from all text-containing elements
+        """
+        texts = []
+        for det in layout_dets:
+            # Skip ignored elements
+            if det.get('ignore', False):
+                continue
+            
+            # Extract text from main field
+            if 'text' in det and det['text']:
+                texts.append(det['text'])
+            
+            # Extract text from line_with_spans
+            if 'line_with_spans' in det:
+                for line in det['line_with_spans']:
+                    if isinstance(line, dict) and 'text' in line and line['text']:
+                        texts.append(line['text'])
+        
+        return '\n'.join(texts)
+    
     def load_dataset(self, dataset_path: str) -> List[Dict]:
         """Load OmniDocBench dataset structure.
         
@@ -45,90 +72,88 @@ class OmniDocBenchLoader:
             dataset_path: Path to OmniDocBench dataset directory
             
         Returns:
-            List of dictionaries containing document info (id, doc_path, gt_path)
+            List of dictionaries containing document info (id, doc_path, gt_text)
         """
         dataset_dir = Path(dataset_path)
         
         if not dataset_dir.exists():
             raise FileNotFoundError(f"Dataset directory not found: {dataset_path}")
         
+        # Find the annotations JSON file
+        annotations_file = dataset_dir / 'annotations' / 'OmniDocBench.json'
+        if not annotations_file.exists():
+            raise FileNotFoundError(
+                f"OmniDocBench annotations file not found: {annotations_file}\n"
+                f"Expected structure: {dataset_path}/annotations/OmniDocBench.json"
+            )
+        
+        # Find the images directory
+        images_dir = dataset_dir / 'images'
+        if not images_dir.exists():
+            raise FileNotFoundError(
+                f"OmniDocBench images directory not found: {images_dir}\n"
+                f"Expected structure: {dataset_path}/images/"
+            )
+        
+        print(f"Loading annotations from: {annotations_file}")
+        with open(annotations_file, 'r', encoding='utf-8') as f:
+            annotations = json.load(f)
+        
+        print(f"Found {len(annotations)} annotation entries")
+        
+        # Build a mapping of image_path -> annotation entry
+        image_to_annotation = {}
+        for entry in annotations:
+            if 'page_info' in entry and 'image_path' in entry['page_info']:
+                image_path = entry['page_info']['image_path']
+                image_to_annotation[image_path] = entry
+        
+        print(f"Found {len(image_to_annotation)} unique image paths in annotations")
+        
+        # Find all image files and match with annotations
         documents = []
-        
-        # Common OmniDocBench structure:
-        # - dataset/images/ or dataset/documents/
-        # - dataset/annotations/ or dataset/ground_truth/
-        # - Or flat structure with .json/.txt ground truth files
-        
-        # Try to find images directory
-        images_dir = None
-        for possible_dir in ['images', 'documents', 'data', '']:
-            test_dir = dataset_dir / possible_dir
-            if test_dir.exists():
-                images_dir = test_dir
-                break
-        
-        if images_dir is None:
-            images_dir = dataset_dir
-        
-        # Find all document files
         image_extensions = {'.png', '.jpg', '.jpeg', '.pdf', '.tiff', '.tif'}
+        
+        # Get all image files
+        image_files = []
         for img_file in images_dir.rglob('*'):
-            if img_file.suffix.lower() in image_extensions:
-                # Find corresponding ground truth
-                gt_file = self._find_ground_truth(img_file, dataset_dir)
+            if img_file.is_file() and img_file.suffix.lower() in image_extensions:
+                image_files.append(img_file)
+        
+        print(f"Found {len(image_files)} image files in directory")
+        
+        matched_count = 0
+        for img_file in image_files:
+            # Try to match by filename (just the name, not full path)
+            img_filename = img_file.name
+            
+            # Check if this image has an annotation
+            if img_filename in image_to_annotation:
+                entry = image_to_annotation[img_filename]
+                
+                # Extract ground truth text from layout_dets
+                layout_dets = entry.get('layout_dets', [])
+                gt_text = self._extract_text_from_layout_dets(layout_dets)
                 
                 documents.append({
                     'id': img_file.stem,
                     'doc_path': str(img_file.absolute()),
-                    'gt_path': str(gt_file.absolute()) if gt_file else None
+                    'gt_path': None,  # Ground truth is embedded, not a file
+                    'gt_text': gt_text,  # Direct text content
+                    'annotation_entry': entry  # Store full entry for reference
+                })
+                matched_count += 1
+            else:
+                # Image without annotation - still process but without ground truth
+                documents.append({
+                    'id': img_file.stem,
+                    'doc_path': str(img_file.absolute()),
+                    'gt_path': None,
+                    'gt_text': None,
+                    'annotation_entry': None
                 })
         
+        print(f"Matched {matched_count} images with annotations out of {len(image_files)} total images")
+        
         return documents
-    
-    def _find_ground_truth(self, doc_path: Path, dataset_dir: Path) -> Optional[Path]:
-        """Find corresponding ground truth file for a document.
-        
-        Args:
-            doc_path: Path to the document file
-            dataset_dir: Root directory of the dataset
-            
-        Returns:
-            Path to ground truth file if found, None otherwise
-        """
-        # Try different possible locations and naming conventions
-        possible_dirs = [
-            dataset_dir / 'annotations',
-            dataset_dir / 'ground_truth',
-            dataset_dir / 'labels',
-            dataset_dir / 'gt',
-            doc_path.parent / 'annotations',
-            doc_path.parent / 'ground_truth',
-        ]
-        
-        possible_extensions = ['.json', '.txt', '.gt', '.label']
-        
-        for gt_dir in possible_dirs:
-            if gt_dir.exists():
-                for ext in possible_extensions:
-                    # Try exact match
-                    gt_file = gt_dir / f"{doc_path.stem}{ext}"
-                    if gt_file.exists():
-                        return gt_file
-                    
-                    # Try with different naming (e.g., image_001 -> gt_001)
-                    if '_' in doc_path.stem:
-                        parts = doc_path.stem.split('_')
-                        for i in range(len(parts)):
-                            alt_name = '_'.join(parts[i:])
-                            gt_file = gt_dir / f"{alt_name}{ext}"
-                            if gt_file.exists():
-                                return gt_file
-        
-        # Try in same directory
-        for ext in possible_extensions:
-            gt_file = doc_path.parent / f"{doc_path.stem}{ext}"
-            if gt_file.exists():
-                return gt_file
-        
-        return None
 

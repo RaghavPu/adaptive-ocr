@@ -1,86 +1,84 @@
-"""OCR inference wrapper for DeepSeek-OCR."""
+"""OCR inference wrapper for DeepSeek-OCR using Transformers."""
 
 import os
 import torch
+import fitz  # PyMuPDF
+import tempfile
 from PIL import Image
 from pathlib import Path
 from typing import Optional, List, Union
-import tempfile
+from transformers import AutoModel, AutoTokenizer
 
+# Patch LlamaFlashAttention2 before model loading
+# The model's custom code tries to import this, but it may not be available
+# We'll create an alias to regular LlamaAttention as a fallback
 try:
-    from transformers import AutoModel, AutoTokenizer
-    TRANSFORMERS_AVAILABLE = True
-except ImportError:
-    TRANSFORMERS_AVAILABLE = False
-    print("Warning: transformers not available. Install with: pip install transformers")
-
-try:
-    import fitz  # PyMuPDF
-    PYMUPDF_AVAILABLE = True
-except ImportError:
-    PYMUPDF_AVAILABLE = False
-    print("Warning: PyMuPDF not available. PDF processing will be limited. Install with: pip install PyMuPDF")
+    from transformers.models.llama import modeling_llama
+    # If LlamaFlashAttention2 doesn't exist, create it as an alias to LlamaAttention
+    if not hasattr(modeling_llama, 'LlamaFlashAttention2'):
+        from transformers.models.llama.modeling_llama import LlamaAttention
+        # Create LlamaFlashAttention2 as an alias to LlamaAttention
+        modeling_llama.LlamaFlashAttention2 = LlamaAttention
+        print("Patched LlamaFlashAttention2 to use LlamaAttention (flash-attn not available)")
+except Exception as e:
+    print(f"Warning: Could not patch LlamaFlashAttention2: {e}")
 
 
 class DeepSeekOCRInference:
-    """Wrapper for DeepSeek-OCR model inference."""
+    """Wrapper for DeepSeek-OCR model inference using Transformers."""
     
     def __init__(
         self, 
         model_name: str = 'deepseek-ai/DeepSeek-OCR',
         device: str = 'cuda',
-        use_flash_attention: bool = True
+        tensor_parallel_size: int = 1,
+        max_model_len: Optional[int] = None,
+        dtype: str = 'bfloat16'
     ):
-        """Initialize DeepSeek-OCR model.
+        """Initialize DeepSeek-OCR model with Transformers.
         
         Args:
             model_name: HuggingFace model name or path
             device: Device to run inference on ('cuda' or 'cpu')
-            use_flash_attention: Whether to use flash attention
+            tensor_parallel_size: Number of GPUs for tensor parallelism (not used with Transformers)
+            max_model_len: Maximum sequence length (not used with Transformers)
+            dtype: Model dtype (bfloat16, float16, or float32)
         """
-        if not TRANSFORMERS_AVAILABLE:
-            raise ImportError("transformers library is required. Install with: pip install transformers")
-        
-        self.device = device if torch.cuda.is_available() and device == 'cuda' else 'cpu'
         self.model_name = model_name
+        self.device = device
         
-        print(f"Loading DeepSeek-OCR model: {model_name}")
-        print(f"Using device: {self.device}")
+        print(f"Loading DeepSeek-OCR model with Transformers: {model_name}")
+        print(f"Using device: {device}")
         
-        # Load tokenizer
-        self.tokenizer = AutoTokenizer.from_pretrained(
-            model_name, 
-            trust_remote_code=True
-        )
-        
-        # Load model
-        attn_impl = 'flash_attention_2' if use_flash_attention else 'sdpa'
         try:
+            # Load tokenizer
+            self.tokenizer = AutoTokenizer.from_pretrained(
+                model_name, 
+                trust_remote_code=True
+            )
+            
+            # Load model
             self.model = AutoModel.from_pretrained(
                 model_name,
-                _attn_implementation=attn_impl,
                 trust_remote_code=True,
                 use_safetensors=True
             )
-        except Exception as e:
-            print(f"Warning: Could not load with flash_attention_2, trying default: {e}")
-            self.model = AutoModel.from_pretrained(
-                model_name,
-                trust_remote_code=True,
-                use_safetensors=True
-            )
-        
-        self.model = self.model.eval()
-        
-        if self.device == 'cuda':
-            self.model = self.model.cuda()
-            # Use bfloat16 if available
-            if hasattr(torch.cuda, 'is_bf16_supported') and torch.cuda.is_bf16_supported():
-                self.model = self.model.to(torch.bfloat16)
+            
+            # Move to device and set dtype
+            if device == 'cuda':
+                self.model = self.model.eval().cuda()
+                if dtype == 'bfloat16':
+                    self.model = self.model.to(torch.bfloat16)
+                elif dtype == 'float16':
+                    self.model = self.model.to(torch.float16)
+                elif dtype == 'float32':
+                    self.model = self.model.to(torch.float32)
             else:
-                self.model = self.model.to(torch.float16)
-        else:
-            self.model = self.model.to(torch.float32)
+                self.model = self.model.eval()
+            
+            print("Transformers model loaded successfully")
+        except Exception as e:
+            raise RuntimeError(f"Failed to load model with Transformers: {e}")
     
     def process_document(
         self, 
@@ -95,9 +93,9 @@ class DeepSeekOCRInference:
         Args:
             doc_path: Path to document (PDF or image)
             prompt: Prompt to use for OCR
-            base_size: Base image size for processing
-            image_size: Target image size
-            crop_mode: Whether to use crop mode
+            base_size: Base image size for processing (used for image preprocessing)
+            image_size: Target image size (used for image preprocessing)
+            crop_mode: Whether to use crop mode (used for image preprocessing)
             
         Returns:
             OCR text output
@@ -127,40 +125,47 @@ class DeepSeekOCRInference:
         Args:
             image_path: Path to image file
             prompt: OCR prompt
-            base_size: Base image size
-            image_size: Target image size
-            crop_mode: Whether to use crop mode
+            base_size: Base image size (for preprocessing if needed)
+            image_size: Target image size (for preprocessing if needed)
+            crop_mode: Whether to use crop mode (for preprocessing if needed)
             
         Returns:
             OCR text output
         """
         try:
-            # Use the model's infer method if available
-            if hasattr(self.model, 'infer'):
-                result = self.model.infer(
-                    self.tokenizer,
-                    prompt=prompt,
-                    image_file=str(image_path),
-                    base_size=base_size,
-                    image_size=image_size,
-                    crop_mode=crop_mode,
-                    save_results=False,
-                    test_compress=False
-                )
-                # Extract text if result is a dict
-                if isinstance(result, dict):
-                    return result.get('text', '') or result.get('output', '') or str(result)
-                return str(result)
+            image_path = Path(image_path)
+            if not image_path.exists():
+                raise FileNotFoundError(f"Image not found: {image_path}")
+            
+            # Use the model's infer method (as per HuggingFace documentation)
+            result = self.model.infer(
+                self.tokenizer,
+                prompt=prompt,
+                image_file=str(image_path),
+                base_size=base_size,
+                image_size=image_size,
+                crop_mode=crop_mode,
+                save_results=False,
+                test_compress=False, 
+                output_path="results/ocr_output/", 
+                eval_mode=True
+            )
+            
+            # The infer method returns the OCR text directly
+            if result is None:
+                return ""
+            elif isinstance(result, str):
+                return result.strip()
+            elif isinstance(result, dict):
+                return result.get('text', result.get('output', '')).strip() or ""
             else:
-                # Fallback: try to use the model directly
-                # This is a simplified version - actual implementation may vary
-                raise NotImplementedError(
-                    "Model infer method not available. "
-                    "Please ensure DeepSeek-OCR model is properly loaded."
-                )
+                return str(result).strip()
+                
         except Exception as e:
             print(f"Error processing image {image_path}: {e}")
             raise
+        finally:
+            pass
     
     def _process_pdf(
         self,
@@ -182,12 +187,6 @@ class DeepSeekOCRInference:
         Returns:
             Combined OCR text from all pages
         """
-        if not PYMUPDF_AVAILABLE:
-            raise ImportError(
-                "PyMuPDF is required for PDF processing. "
-                "Install with: pip install PyMuPDF"
-            )
-        
         doc = fitz.open(str(pdf_path))
         results = []
         
@@ -253,4 +252,3 @@ class DeepSeekOCRInference:
                 results.append("")
         
         return results
-

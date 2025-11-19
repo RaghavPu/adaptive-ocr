@@ -1,17 +1,10 @@
 """Main document processor orchestrator."""
 
-from pathlib import Path
 import json
+import random
+from tqdm import tqdm
+from pathlib import Path
 from typing import List, Dict, Optional
-
-try:
-    from tqdm import tqdm
-except ImportError:
-    # Fallback if tqdm is not available
-    def tqdm(iterable, desc=None, **kwargs):
-        if desc:
-            print(desc)
-        return iterable
 
 from .ocr_inference import DeepSeekOCRInference
 from .metrics import OCRMetrics
@@ -40,14 +33,22 @@ class DocumentProcessor:
         self, 
         doc_path: str, 
         gt_path: Optional[str] = None,
-        prompt: str = "<image>\nFree OCR."
+        gt_text: Optional[str] = None,  # Add this parameter
+        prompt: str = "<image>\nFree OCR.",
+        base_size: int = 1024,
+        image_size: int = 640,
+        crop_mode: bool = True
     ) -> Dict:
         """Process a single document and return metrics.
         
         Args:
             doc_path: Path to document file
             gt_path: Optional path to ground truth file
+            gt_text: Optional ground truth text (takes precedence over gt_path)
             prompt: OCR prompt to use
+            base_size: Base image size for preprocessing
+            image_size: Target image size for preprocessing
+            crop_mode: Whether to use crop mode
             
         Returns:
             Dictionary containing OCR output and metrics
@@ -56,7 +57,13 @@ class DocumentProcessor:
         
         # Get OCR output
         try:
-            ocr_output = self.ocr_model.process_document(doc_path, prompt=prompt)
+            ocr_output = self.ocr_model.process_document(
+                doc_path, 
+                prompt=prompt,
+                base_size=base_size,
+                image_size=image_size,
+                crop_mode=crop_mode
+            )
         except Exception as e:
             print(f"Error during OCR inference: {e}")
             ocr_output = ""
@@ -66,16 +73,26 @@ class DocumentProcessor:
             'ocr_output': ocr_output,
         }
         
-        # Get ground truth and calculate metrics if provided
-        if gt_path:
+        # Get ground truth - prefer gt_text over gt_path
+        ground_truth = None
+        if gt_text is not None:
+            ground_truth = gt_text
+        elif gt_path:
             try:
                 ground_truth = self.loader.load_ground_truth(gt_path)
+            except Exception as e:
+                print(f"Error loading ground truth from file: {e}")
+                ground_truth = None
+        
+        # Calculate metrics if we have ground truth
+        if ground_truth is not None:
+            try:
                 metrics = self.metrics.calculate_all_metrics(ocr_output, ground_truth)
                 result.update(metrics)
                 result['ground_truth'] = ground_truth
-                result['ground_truth_path'] = str(gt_path)
+                result['ground_truth_path'] = gt_path if gt_path else 'embedded'
             except Exception as e:
-                print(f"Error loading ground truth or calculating metrics: {e}")
+                print(f"Error calculating metrics: {e}")
                 result['error'] = str(e)
         else:
             result['ground_truth'] = None
@@ -88,7 +105,11 @@ class DocumentProcessor:
         dataset_path: str, 
         output_dir: str = 'results',
         prompt: str = "<image>\nFree OCR.",
-        save_individual_results: bool = True
+        save_individual_results: bool = True,
+        base_size: int = 1024,
+        image_size: int = 640,
+        crop_mode: bool = True,
+        max_docs: Optional[int] = None
     ) -> Dict:
         """Process entire OmniDocBench dataset.
         
@@ -97,6 +118,10 @@ class DocumentProcessor:
             output_dir: Directory to save results
             prompt: OCR prompt to use
             save_individual_results: Whether to save individual document results
+            base_size: Base image size for preprocessing
+            image_size: Target image size for preprocessing
+            crop_mode: Whether to use crop mode
+            max_docs: Optional limit on number of documents to process
             
         Returns:
             Dictionary containing aggregated metrics
@@ -107,6 +132,11 @@ class DocumentProcessor:
         if not documents:
             raise ValueError(f"No documents found in dataset: {dataset_path}")
         
+        original_count = len(documents)
+        if max_docs is not None:
+            documents = random.sample(documents, min(max_docs, len(documents)))
+            print(f"Limiting dataset to {len(documents)} documents (requested max_docs={max_docs})")
+        
         print(f"Found {len(documents)} documents")
         
         results = []
@@ -115,11 +145,29 @@ class DocumentProcessor:
         # Process each document
         for doc_info in tqdm(documents, desc="Processing documents"):
             try:
+                # For OmniDocBench, ground truth is embedded in doc_info['gt_text']
+                # Pass it directly instead of a file path
+                gt_text = doc_info.get('gt_text')
+                
                 metrics = self.process_single_document(
                     doc_info['doc_path'],
-                    doc_info.get('gt_path'),
-                    prompt=prompt
+                    gt_path=None,  # No file path, we'll pass text directly
+                    gt_text=gt_text,  # Pass embedded text
+                    prompt=prompt,
+                    base_size=base_size,
+                    image_size=image_size,
+                    crop_mode=crop_mode
                 )
+                
+                # If we have embedded ground truth text, use it
+                if gt_text is not None:
+                    metrics['ground_truth'] = gt_text
+                    # Recalculate metrics with the correct ground truth
+                    metrics.update(self.metrics.calculate_all_metrics(
+                        metrics.get('ocr_output', ''),
+                        gt_text
+                    ))
+                
                 metrics['document_id'] = doc_info['id']
                 results.append(metrics)
             except Exception as e:
@@ -136,6 +184,8 @@ class DocumentProcessor:
         aggregated['total_documents'] = len(documents)
         aggregated['processed_documents'] = len(results)
         aggregated['errors'] = len(errors)
+        aggregated['requested_max_docs'] = max_docs
+        aggregated['original_dataset_size'] = original_count
         
         # Save results
         output_path = Path(output_dir)

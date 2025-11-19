@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 """Main evaluation script for DeepSeek-OCR on OmniDocBench."""
 
-import argparse
 import sys
+import json
+import argparse
+import traceback
 from pathlib import Path
+
+# Add parent directory to path to allow imports from pipeline
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from pipeline.document_processor import DocumentProcessor
 
@@ -44,6 +49,12 @@ Examples:
     )
     
     parser.add_argument(
+        '--max_docs',
+        type=int,
+        help='Optional limit on number of documents to process (e.g. 100)'
+    )
+    
+    parser.add_argument(
         '--output_dir',
         type=str,
         default='results',
@@ -78,6 +89,27 @@ Examples:
         help='Do not save individual document results (only aggregated metrics)'
     )
     
+    parser.add_argument(
+        '--base_size',
+        type=int,
+        default=1024,
+        help='Base image size for preprocessing (default: 1024)'
+    )
+
+    parser.add_argument(
+        '--image_size',
+        type=int,
+        default=640,
+        help='Target image size (square) for preprocessing (default: 640)'
+    )
+
+    parser.add_argument(
+        '--crop_mode',
+        action='store_true',
+        default=False,
+        help='Use crop mode for image preprocessing (default: False)'
+    )
+    
     args = parser.parse_args()
     
     # Validate arguments
@@ -103,13 +135,15 @@ Examples:
     # Process documents
     try:
         if args.dataset_path:
-            # Process entire dataset
-            print(f"Processing dataset: {args.dataset_path}")
             metrics = processor.process_dataset(
                 args.dataset_path,
                 args.output_dir,
                 prompt=args.prompt,
-                save_individual_results=not args.no_save_individual
+                save_individual_results=not args.no_save_individual,
+                base_size=args.base_size,
+                image_size=args.image_size,
+                crop_mode=args.crop_mode,
+                max_docs=args.max_docs
             )
             
             print(f"\nResults saved to: {args.output_dir}")
@@ -120,7 +154,10 @@ Examples:
             metrics = processor.process_single_document(
                 args.doc_path,
                 args.gt_path,
-                prompt=args.prompt
+                prompt=args.prompt,
+                base_size=args.base_size,
+                image_size=args.image_size,
+                crop_mode=args.crop_mode
             )
             
             # Print results
@@ -151,7 +188,6 @@ Examples:
             
             # Save result if output directory specified
             if args.output_dir:
-                import json
                 output_path = Path(args.output_dir)
                 output_path.mkdir(parents=True, exist_ok=True)
                 output_file = output_path / f"{Path(args.doc_path).stem}_result.json"
@@ -161,7 +197,6 @@ Examples:
         
     except Exception as e:
         print(f"Error during processing: {e}", file=sys.stderr)
-        import traceback
         traceback.print_exc()
         sys.exit(1)
 
