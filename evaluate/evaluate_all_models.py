@@ -8,27 +8,41 @@ from pathlib import Path
 # Model configurations based on DeepSeek-OCR native resolutions
 MODEL_CONFIGS = {
     'tiny': {
-        'model_name': 'deepseek-ai/DeepSeek-OCR',  # Use base model, adjust image_size
+        'model_name': 'deepseek-ai/DeepSeek-OCR',
         'image_size': 512,
         'base_size': 512,
+        'crop_mode': False,
     },
     'small': {
         'model_name': 'deepseek-ai/DeepSeek-OCR',
         'image_size': 640,
         'base_size': 640,
+        'crop_mode': False,
     },
     'base': {
         'model_name': 'deepseek-ai/DeepSeek-OCR',
         'image_size': 1024,
         'base_size': 1024,
+        'crop_mode': False,
     },
     'large': {
         'model_name': 'deepseek-ai/DeepSeek-OCR',
         'image_size': 1280,
         'base_size': 1280,
+        'crop_mode': False,
     },
-    # Note: Gundam requires special handling for dynamic resolution
-    # You may need separate model checkpoints for gundam variants
+    'gundam': {
+        'model_name': 'deepseek-ai/DeepSeek-OCR',
+        'image_size': 1024,  # Max size for gundam mode (mixes 640x640 and 1024x1024)
+        'base_size': 1024,
+        'crop_mode': True,  # Enable dynamic tiling
+    },
+    'gundam-M': {
+        'model_name': 'deepseek-ai/DeepSeek-OCR',
+        'image_size': 1280,  # Max size for gundam-M (adaptive 512px to 1280px)
+        'base_size': 1280,
+        'crop_mode': True,  # Enable dynamic tiling with adaptive resolution
+    },
 }
 
 def run_evaluation(model_name, output_dir, dataset_path, image_size, base_size, max_docs=None, crop_mode=False):
@@ -54,6 +68,7 @@ def run_evaluation(model_name, output_dir, dataset_path, image_size, base_size, 
     print(f"\n{'='*60}")
     print(f"Evaluating: {output_dir}")
     print(f"Image size: {image_size}x{image_size}")
+    print(f"Crop mode: {crop_mode}")
     print(f"Command: {' '.join(cmd)}")
     print(f"{'='*60}\n")
     
@@ -69,8 +84,9 @@ def main():
                        default=['all'], help='Models to evaluate')
     parser.add_argument('--max_docs', type=int,
                        help='Optional limit on number of documents to process per model')
-    parser.add_argument('--crop_mode', action='store_true',
-                       help='Enable crop mode when preprocessing images')
+    # Remove the global --crop_mode flag since it's now model-specific
+    # parser.add_argument('--crop_mode', action='store_true',
+    #                    help='Enable crop mode when preprocessing images')
     
     args = parser.parse_args()
     
@@ -92,7 +108,7 @@ def main():
             config['image_size'],
             config['base_size'],
             max_docs=args.max_docs,
-            crop_mode=args.crop_mode
+            crop_mode=config.get('crop_mode', False)  # Use model-specific crop_mode
         )
         
         results[model_key] = 'SUCCESS' if success else 'FAILED'
