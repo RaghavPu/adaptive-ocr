@@ -21,6 +21,7 @@ Adaptive OCR is designed to automatically select optimal compression level for D
 ```
 
 ## Environment Setup
+### VM Setup
 1. **Python & CUDA**  
    - Python ≥3.10 (tested with 3.12.8).  
    - CUDA-capable GPU recommended
@@ -38,6 +39,9 @@ Adaptive OCR is designed to automatically select optimal compression level for D
      ```bash
      echo "HF_TOKEN=hf_xxx" > .env
      ```
+
+### Local Setup 
+TODO
 
 ## Dataset Preparation
 ```bash
