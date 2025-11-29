@@ -296,13 +296,13 @@ def plot_confusion_matrix(y_true, y_pred, class_names, save_path):
 def main():
     parser = argparse.ArgumentParser(description='Train optimal model classifier')
     parser.add_argument('--labels_file', type=str, 
-                       default='optimal_model_labels.json',
+                       default='results/optimal_model_labels.json',
                        help='Path to labels JSON file')
     parser.add_argument('--images_dir', type=str,
                        default='OmniDocBench/images',
                        help='Path to images directory')
     parser.add_argument('--output_dir', type=str,
-                       default='classifier_output',
+                       default='results/classifier_output',
                        help='Output directory for model and results')
     parser.add_argument('--epochs', type=int, default=40,
                        help='Number of training epochs')
