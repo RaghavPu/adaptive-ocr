@@ -296,13 +296,13 @@ def plot_confusion_matrix(y_true, y_pred, class_names, save_path):
 def main():
     parser = argparse.ArgumentParser(description='Train optimal model classifier')
     parser.add_argument('--labels_file', type=str, 
-                       default='results/optimal_model_labels.json',
+                       default='optimal_model_labels.json',
                        help='Path to labels JSON file')
     parser.add_argument('--images_dir', type=str,
                        default='OmniDocBench/images',
                        help='Path to images directory')
     parser.add_argument('--output_dir', type=str,
-                       default='results/classifier_output',
+                       default='classifier_output',
                        help='Output directory for model and results')
     parser.add_argument('--epochs', type=int, default=40,
                        help='Number of training epochs')
@@ -324,10 +324,10 @@ def main():
                        help='Disable data augmentation')
     parser.add_argument('--mixed_precision', action='store_true',
                        help='Use mixed precision training')
-    parser.add_argument('--no_freeze_backbone', action='store_true',
-                       help='Train entire model (no freezing, use with caution on limited data)')
+    parser.add_argument('--freeze_backbone', action='store_true', default=True,
+                       help='Freeze backbone (only train classifier head)')
     parser.add_argument('--unfreeze_layers', type=int, default=2,
-                       help='Number of last backbone layers to unfreeze (default: 2, only if backbone frozen)')
+                       help='Number of last backbone layers to unfreeze (default: 2)')
     parser.add_argument('--unfreeze_epoch', type=int, default=None,
                        help='Epoch to unfreeze backbone for fine-tuning (optional)')
     
@@ -416,12 +416,11 @@ def main():
     
     # Create model
     print("\nInitializing EfficientNet-B0 model...")
-    freeze_backbone = not args.no_freeze_backbone
     model = EfficientNetClassifier(
         num_classes=4, 
         dropout=args.dropout,
-        freeze_backbone=freeze_backbone,
-        unfreeze_layers=args.unfreeze_layers if freeze_backbone else 0
+        freeze_backbone=args.freeze_backbone,
+        unfreeze_layers=args.unfreeze_layers if args.freeze_backbone else 0
     )
     model = model.to(device)
     
@@ -431,13 +430,12 @@ def main():
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,} ({100*trainable_params/total_params:.1f}%)")
     
-    if freeze_backbone:
-        print(f"Training strategy: Mostly frozen backbone + trainable classifier")
+    if args.freeze_backbone:
+        print(f"Training strategy: Frozen backbone + trainable classifier")
         if args.unfreeze_epoch:
-            print(f"Will fully unfreeze backbone at epoch {args.unfreeze_epoch}")
+            print(f"Will unfreeze backbone at epoch {args.unfreeze_epoch}")
     else:
-        print(f"Training strategy: Fine-tuning ENTIRE model (all {trainable_params:,} params)")
-        print(f"⚠️  Warning: Training all parameters with limited data - using heavy regularization")
+        print(f"Training strategy: Fine-tuning entire model")
     
     # Loss function with class weights
     criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
