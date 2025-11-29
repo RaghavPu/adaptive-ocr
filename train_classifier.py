@@ -111,7 +111,7 @@ def get_transforms(image_size=224, augment=True):
 class EfficientNetClassifier(nn.Module):
     """EfficientNet-B0 based classifier for optimal model prediction."""
     
-    def __init__(self, num_classes=4, dropout=0.4):
+    def __init__(self, num_classes=4, dropout=0.4, freeze_backbone=True):
         super().__init__()
         # Load pretrained EfficientNet-B0
         self.backbone = timm.create_model(
@@ -121,21 +121,53 @@ class EfficientNetClassifier(nn.Module):
             global_pool=''  # Remove pooling
         )
         
+        # Freeze backbone if requested
+        if freeze_backbone:
+            for param in self.backbone.parameters():
+                param.requires_grad = False
+            print("✓ Backbone frozen (only training classifier head)")
+        
         # Custom classification head
         self.pool = nn.AdaptiveAvgPool2d(1)
-        self.dropout = nn.Dropout(dropout)
-        self.classifier = nn.Linear(1280, num_classes)  # EfficientNet-B0 has 1280 features
+        self.classifier = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(1280, 512),  # Hidden layer
+            nn.ReLU(),
+            nn.Dropout(dropout * 0.5),  # Less dropout on second layer
+            nn.Linear(512, num_classes)
+        )
         
     def forward(self, x):
-        # Extract features
-        features = self.backbone(x)
+        # Extract features (frozen)
+        with torch.no_grad() if not self.training else torch.enable_grad():
+            features = self.backbone(x)
         # Global average pooling
         features = self.pool(features)
         features = features.flatten(1)
-        # Classification
-        features = self.dropout(features)
+        # Classification (trainable)
         logits = self.classifier(features)
         return logits
+    
+    def unfreeze_backbone(self, num_layers=None):
+        """Unfreeze backbone layers for fine-tuning.
+        
+        Args:
+            num_layers: Number of layers to unfreeze from the end.
+                       If None, unfreezes all layers.
+        """
+        if num_layers is None:
+            # Unfreeze all
+            for param in self.backbone.parameters():
+                param.requires_grad = True
+            print("✓ Entire backbone unfrozen")
+        else:
+            # Unfreeze last N layers
+            # EfficientNet has blocks, unfreeze from the end
+            blocks = list(self.backbone.children())
+            for block in blocks[-num_layers:]:
+                for param in block.parameters():
+                    param.requires_grad = True
+            print(f"✓ Unfroze last {num_layers} blocks of backbone")
 
 
 def compute_class_weights(labels):
@@ -275,6 +307,10 @@ def main():
                        help='Disable data augmentation')
     parser.add_argument('--mixed_precision', action='store_true',
                        help='Use mixed precision training')
+    parser.add_argument('--freeze_backbone', action='store_true', default=True,
+                       help='Freeze backbone (only train classifier head)')
+    parser.add_argument('--unfreeze_epoch', type=int, default=None,
+                       help='Epoch to unfreeze backbone for fine-tuning (optional)')
     
     args = parser.parse_args()
     
@@ -361,14 +397,25 @@ def main():
     
     # Create model
     print("\nInitializing EfficientNet-B0 model...")
-    model = EfficientNetClassifier(num_classes=4, dropout=args.dropout)
+    model = EfficientNetClassifier(
+        num_classes=4, 
+        dropout=args.dropout,
+        freeze_backbone=args.freeze_backbone
+    )
     model = model.to(device)
     
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Total parameters: {total_params:,}")
-    print(f"Trainable parameters: {trainable_params:,}")
+    print(f"Trainable parameters: {trainable_params:,} ({100*trainable_params/total_params:.1f}%)")
+    
+    if args.freeze_backbone:
+        print(f"Training strategy: Frozen backbone + trainable classifier")
+        if args.unfreeze_epoch:
+            print(f"Will unfreeze backbone at epoch {args.unfreeze_epoch}")
+    else:
+        print(f"Training strategy: Fine-tuning entire model")
     
     # Loss function with class weights
     criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
@@ -403,6 +450,18 @@ def main():
     for epoch in range(args.epochs):
         print(f"\nEpoch {epoch+1}/{args.epochs}")
         print("-" * 40)
+        
+        # Unfreeze backbone if specified
+        if args.unfreeze_epoch and epoch == args.unfreeze_epoch:
+            print("\n" + "="*60)
+            print(f"UNFREEZING BACKBONE FOR FINE-TUNING")
+            print("="*60)
+            model.unfreeze_backbone()
+            # Reduce learning rate when unfreezing
+            for param_group in optimizer.param_groups:
+                param_group['lr'] = args.lr * 0.1
+            print(f"Learning rate reduced to {optimizer.param_groups[0]['lr']:.6f}")
+            print("="*60 + "\n")
         
         # Train
         train_loss, train_acc = train_epoch(

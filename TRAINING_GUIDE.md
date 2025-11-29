@@ -24,9 +24,11 @@ python train_classifier.py \
 
 ## Training Configuration
 
-### Default Settings (Optimized for 70-75% Accuracy)
+### Default Settings (Transfer Learning - Frozen Backbone)
 
 - **Model**: EfficientNet-B0 (5.3M parameters)
+  - **Frozen**: 4.0M parameters (backbone)
+  - **Trainable**: 1.3M parameters (classifier head only)
 - **Image Size**: 224x224
 - **Batch Size**: 32
 - **Epochs**: 40
@@ -34,6 +36,17 @@ python train_classifier.py \
 - **Optimizer**: AdamW with weight decay 1e-4
 - **Dropout**: 0.4
 - **Data Split**: 80% train, 10% val, 10% test
+
+**Training Strategy**: 
+1. **Phase 1 (default)**: Train only classifier head with frozen backbone
+   - Faster convergence
+   - Less prone to overfitting
+   - Better for limited data (1000 samples)
+
+2. **Phase 2 (optional)**: Fine-tune entire model with `--unfreeze_epoch`
+   - Unfreeze backbone after initial training
+   - Use lower learning rate (10x reduction)
+   - Squeeze out extra 2-3% accuracy
 
 ### Data Augmentation (Enabled by Default)
 
@@ -170,6 +183,10 @@ Batch of 32:   50-80ms (GPU), 300-400ms (CPU)
 --mixed_precision   Enable mixed precision training (faster, less memory)
 --num_workers       Data loading workers (default: 4)
 
+# Transfer learning options (NEW)
+--freeze_backbone   Freeze backbone, train only classifier (default: True)
+--unfreeze_epoch    Epoch to unfreeze for fine-tuning (e.g., 30)
+
 # Ablation studies
 --no_augment        Disable augmentation (expect -10% accuracy)
 --seed              Random seed (default: 42)
@@ -177,29 +194,36 @@ Batch of 32:   50-80ms (GPU), 300-400ms (CPU)
 
 ## Typical Training Session
 
-### 1. First Run (Baseline)
+### 1. Basic Training (Frozen Backbone - RECOMMENDED)
 ```bash
 python train_classifier.py --epochs 40 --batch_size 32
 ```
-Expected: 68-72% accuracy
+Expected: 68-73% accuracy  
+Trainable params: ~1.3M (classifier head only)  
+Training time: 3-5 minutes (GPU)
 
-### 2. With Mixed Precision (Faster)
+### 2. With Progressive Fine-Tuning (Best Results)
+```bash
+# Phase 1: Train classifier (epochs 0-29)
+# Phase 2: Fine-tune all (epochs 30-49)
+python train_classifier.py --epochs 50 --unfreeze_epoch 30
+```
+Expected: 72-76% accuracy  
+Training time: 6-8 minutes (GPU)
+
+### 3. Fast Training (Mixed Precision)
 ```bash
 python train_classifier.py --epochs 40 --batch_size 32 --mixed_precision
 ```
-Expected: 68-72% accuracy, ~30% faster
+Expected: 68-73% accuracy  
+Training time: 2-4 minutes (GPU)
 
-### 3. Larger Images (Better Accuracy)
+### 4. Fine-Tune Everything (Not Recommended for Limited Data)
 ```bash
-python train_classifier.py --epochs 40 --batch_size 16 --image_size 384
+python train_classifier.py --epochs 40 --freeze_backbone=False
 ```
-Expected: 71-75% accuracy (note: smaller batch due to memory)
-
-### 4. Longer Training (Best Results)
-```bash
-python train_classifier.py --epochs 60 --batch_size 32 --mixed_precision
-```
-Expected: 72-76% accuracy
+Expected: 65-70% accuracy (likely overfits!)  
+Trainable params: 5.3M (entire model)
 
 ## Output Files
 
