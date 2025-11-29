@@ -33,13 +33,13 @@ MODEL_CONFIGS = {
     },
     'gundam': {
         'model_name': 'deepseek-ai/DeepSeek-OCR',
-        'image_size': 1024,  # Max size for gundam mode (mixes 640x640 and 1024x1024)
+        'image_size': 640,  # Max size for gundam mode (mixes 640x640 and 1024x1024)
         'base_size': 1024,
         'crop_mode': True,  # Enable dynamic tiling
     },
     'gundam-M': {
         'model_name': 'deepseek-ai/DeepSeek-OCR',
-        'image_size': 1280,  # Max size for gundam-M (adaptive 512px to 1280px)
+        'image_size': 1024,  # Max size for gundam-M (adaptive 512px to 1280px)
         'base_size': 1280,
         'crop_mode': True,  # Enable dynamic tiling with adaptive resolution
     },
