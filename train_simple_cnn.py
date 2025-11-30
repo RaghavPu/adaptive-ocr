@@ -455,7 +455,7 @@ def main():
             'document_id': doc_id,
             'true_label': class_names[true_label],
             'predicted_label': class_names[pred_label],
-            'correct': true_label == pred_label
+            'correct': bool(true_label == pred_label)  # Convert numpy bool to Python bool
         })
     
     with open(output_dir / 'test_predictions.json', 'w') as f:
