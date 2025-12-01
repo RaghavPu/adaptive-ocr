@@ -284,7 +284,7 @@ def load_results_from_folder(results_dir):
             large/individual_results.json
             gundam/individual_results.json
 
-    Returns dict: {document_id: {model_name: character_accuracy, ...}, ...}
+    Returns dict: {document_id: {model_name: normalized_edit_distance, ...}, ...}
     """
     results_dir = Path(results_dir)
     all_accuracies = {}
@@ -302,7 +302,7 @@ def load_results_from_folder(results_dir):
             doc_id = item['document_id']
             if doc_id not in all_accuracies:
                 all_accuracies[doc_id] = {}
-            all_accuracies[doc_id][model_name] = item['character_accuracy']
+            all_accuracies[doc_id][model_name] = item['normalized_edit_distance']
 
     return all_accuracies
 
@@ -479,13 +479,13 @@ def main():
         )
 
         print(f"\nTotal documents evaluated: {accuracy_stats['total_evaluated']}")
-        print(f"\nAverage accuracy with predictions: {accuracy_stats['avg_predicted_accuracy']*100:.2f}%")
-        print(f"Average accuracy with random selection: {accuracy_stats['avg_random_baseline_accuracy']*100:.2f}%")
-        print(f"\nAccuracy by resolution level:")
+        print(f"\nAverage normalized edit distance with predictions: {accuracy_stats['avg_predicted_accuracy']:.4f}")
+        print(f"Average normalized edit distance with random selection: {accuracy_stats['avg_random_baseline_accuracy']:.4f}")
+        print(f"\nNormalized edit distance by resolution level:")
         for model in MODEL_ORDER:
             acc = accuracy_stats['per_model_accuracies'].get(model, 0)
             diff = accuracy_stats['avg_predicted_accuracy'] - acc
-            print(f"  {model:8s}: {acc*100:.2f}%  (predicted vs {model}: {diff*100:+.2f}%)")
+            print(f"  {model:8s}: {acc:.4f}  (predicted vs {model}: {diff:+.4f})")
 
     # Save evaluation results (token savings and accuracy)
     eval_results = {
