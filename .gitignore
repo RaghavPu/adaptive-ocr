@@ -48,7 +48,6 @@ models/
 data/
 datasets/
 *.pdf
-*.png
 *.jpg
 *.jpeg
 
