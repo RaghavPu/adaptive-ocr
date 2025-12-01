@@ -388,6 +388,8 @@ def main():
                        help='Input image size')
     parser.add_argument('--num_workers', type=int, default=4,
                        help='Number of workers')
+    parser.add_argument('--exclude_gundam', action='store_true',
+                       help='Exclude documents predicted to use gundam model from evaluation')
 
     args = parser.parse_args()
 
@@ -433,12 +435,39 @@ def main():
 
     class_names = MODEL_ORDER
 
+    # Filter out gundam predictions if flag is set
+    original_count = len(predictions)
+    if args.exclude_gundam:
+        filtered_predictions = []
+        filtered_probabilities = []
+        filtered_doc_ids = []
+        filtered_dimensions = []
+        gundam_count = 0
+        
+        for pred_idx, prob, doc_id, dim in zip(predictions, probabilities, doc_ids, dimensions):
+            if class_names[pred_idx] != 'gundam':
+                filtered_predictions.append(pred_idx)
+                filtered_probabilities.append(prob)
+                filtered_doc_ids.append(doc_id)
+                filtered_dimensions.append(dim)
+            else:
+                gundam_count += 1
+        
+        predictions = filtered_predictions
+        probabilities = filtered_probabilities
+        doc_ids = filtered_doc_ids
+        dimensions = filtered_dimensions
+        
+        if gundam_count > 0:
+            print(f"\nExcluded {gundam_count} documents predicted as gundam from evaluation")
+            print(f"Remaining documents: {len(predictions)} (out of {original_count} total)")
+
     # Count predictions
     pred_counts = Counter(class_names[p] for p in predictions)
     print(f"\nPrediction distribution:")
     for model_name in MODEL_ORDER:
         count = pred_counts.get(model_name, 0)
-        pct = 100 * count / len(predictions)
+        pct = 100 * count / len(predictions) if predictions else 0
         print(f"  {model_name:8s}: {count:4d} ({pct:5.1f}%)")
 
     # Print token counts for each model (for reference)
